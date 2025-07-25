@@ -20,7 +20,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 
 # Load env variables
 load_dotenv()
-os.environ["HF_TOKEN"] = os.getenv("GROQ_API_KEY")
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 
 # Streamlit SetUp
@@ -33,9 +33,10 @@ uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_fil
 # To load models only once
 @st.cache_resource
 def load_models():
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    llm = ChatGroq(model="gemma2-9b-it")
-    return embeddings, llm
+    with st.spinner("Please wait while the models are loading.."):
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        llm = ChatGroq(model="gemma2-9b-it")
+        return embeddings, llm
 
 embeddings, llm = load_models()
 
@@ -46,34 +47,45 @@ if "session_id" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = ChatMessageHistory()
 
-if uploaded_files:
-    with st.spinner(text="Your documents are being processed.."):
-        # Reset chat if new files are uploaded
-        if not st.session_state.get("pdf_loaded", False):
-            st.session_state.messages = []
-            st.session_state.chat_history = ChatMessageHistory()
 
-        all_docs = []
-        temp_paths = []
+if "processed_files" not in st.session_state:
+    st.session_state.processed_files = []
 
-        # Process all uploaded PDFs
-        for file in uploaded_files:
-            temp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.pdf")
-            with open(temp_path, "wb") as f:
-                f.write(file.read())
-            temp_paths.append(temp_path)
-            loader = PyPDFLoader(temp_path)
-            pages = loader.load()
-            all_docs.extend(pages)
+current_files = [f.name for f in uploaded_files] if uploaded_files else []    
 
-        # Split text into chunks
-        splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
-        split_docs = splitter.split_documents(all_docs)
+if uploaded_files: 
+    if current_files != st.session_state.processed_files:
+        with st.spinner(text="Processing.."):
+            # Reset chat if new files are uploaded
+            if not st.session_state.get("pdf_loaded", False):
+                st.session_state.messages = []
+                st.session_state.chat_history = ChatMessageHistory()
 
-        # Create Chroma DB and retriever
-        db = Chroma.from_documents(split_docs, embeddings)
-        retriever = db.as_retriever()
+            all_docs = []
+            temp_paths = []
 
+            # Process all uploaded PDFs
+            for file in uploaded_files:
+                temp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.pdf")
+                with open(temp_path, "wb") as f:
+                    f.write(file.read())
+                temp_paths.append(temp_path)
+                loader = PyPDFLoader(temp_path)
+                pages = loader.load()
+                all_docs.extend(pages)
+
+            # Split text into chunks
+            splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
+            split_docs = splitter.split_documents(all_docs)
+
+            # Create Chroma DB and retriever
+            db = Chroma.from_documents(split_docs, embeddings)
+            retriever = db.as_retriever()
+
+            # Save files to session
+            st.session_state.processed_files = current_files
+            st.session_state.retriever = retriever
+            st.session_state.temp_path = temp_paths
     # Prompt to convert questions from context into standalone questions    
     sys_prompt = """
     Given a chat history and the latest user question which might reference context in the chat history,
@@ -87,7 +99,7 @@ if uploaded_files:
         ("human", "{input}"),
     ])
 
-    history_aware_retriever = create_history_aware_retriever(llm, retriever, prompt)
+    history_aware_retriever = create_history_aware_retriever(llm, st.session_state.retriever, prompt)
 
     # Prompt for final answer
     answer_prompt = ChatPromptTemplate.from_messages([
@@ -131,7 +143,7 @@ if uploaded_files:
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
     # Remove temp files
-    for path in temp_paths:
+    for path in st.session_state.temp_path:
         try:
             os.remove(path)
         except:
