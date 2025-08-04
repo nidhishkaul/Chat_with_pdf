@@ -24,7 +24,7 @@ os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 
 # Streamlit SetUp
-st.title("📚 Chat with your PDF notes!")
+st.title("📚 PDF Genius – Chat with Your Notes!")
 st.write("Upload your PDF notes or books and ask questions like you're talking to a tutor.")
 
 # File uploader
@@ -86,6 +86,7 @@ if uploaded_files:
             st.session_state.processed_files = current_files
             st.session_state.retriever = retriever
             st.session_state.temp_path = temp_paths
+
     # Prompt to convert questions from context into standalone questions    
     sys_prompt = """
     Given a chat history and the latest user question which might reference context in the chat history,
